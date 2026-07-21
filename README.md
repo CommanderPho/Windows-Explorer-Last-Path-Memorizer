@@ -11,6 +11,11 @@ Open the installer and follow the steps required to install the app.
 ### Manual
 Just copy the executable `ExplorerLastPathMemorizer.exe` in `shell:startup` or create a setting to make the app start automatically with your PC.
 
+### Shortcuts
+| Keybind       | Description                                                 |
+|:------------:|:------------------------------------------------------------:|
+| Ctrl+Shift+T  | Re-open last closed window                                  |
+| Ctrl+Shift+R  | Open a popup menu with a list of recently closed windows    |
 
 ## Settings
 Settings are stored in
