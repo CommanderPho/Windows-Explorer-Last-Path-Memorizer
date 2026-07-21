@@ -22,3 +22,6 @@ Where you can find `inclusion-rules.txt`
 Leave the document empty in order to include all new windows with no path to the rules.
 
 Else type the captions in lowercase (like "this pc" or "home") for which news windows's paths you want navigated.
+
+## Images
+<img width="1000" height="605" alt="Recording 2026-07-21 182303" src="https://github.com/user-attachments/assets/21f52ae0-8e89-428b-bb51-4412234c4599" />
