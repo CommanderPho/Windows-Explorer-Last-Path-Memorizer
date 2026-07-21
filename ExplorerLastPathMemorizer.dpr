@@ -43,7 +43,8 @@ var
   ShellWindows: IShellWindows;
 
   // System
-  var AppData, LastKnowPath, InclusionPath: string;
+  var AppData,
+    FileLogPath, LastKnowPath, InclusionPath: string;
 
   // Settings
   InclusionSettings: TStringList;
@@ -74,6 +75,14 @@ begin
   Log(Format(S, Fmt));
 end;
 {$ENDIF}
+procedure LogFile(S: string); overload;
+begin
+  TFile.AppendAllText(FileLogPath, Format('%s: %s', [DateTimeToStr(Now), S])+sLineBreak, TEncoding.UTF8);
+end;
+procedure LogFile(S: string; Fmt: array of const); overload;
+begin
+  LogFile(Format(S, Fmt));
+end;
 
 function GetExplorerBrowserInterface(Handle: HWND): IWebBrowser2;
 var
@@ -114,6 +123,8 @@ begin
   Result := StringReplace(Result, '/', '\', [rfReplaceAll]);
   Result := TNetEncoding.URL.Decode(Result);
 end;
+
+type TSUperExept = type Exception;
 
 procedure DoLoop;
 begin
@@ -157,7 +168,6 @@ begin
     LastWasAWindowChange := false;
   end else
     LastWasAWindowChange := true;
-
 
   if ActiveWindow <> LastActiveWindow then begin
     LastActiveWindow := ActiveWindow;
@@ -245,7 +255,12 @@ procedure MainLoop;
 begin
   {$IFDEF OUTPUT}Log('Starting main loop...');{$ENDIF}
   repeat
-    DoLoop;
+    try
+      DoLoop;
+    except
+      on E: Exception do
+        LogFile('ERROR: Raised exception '+E.ClassName+': '+E.ToString);
+    end;
 
     Sleep(LOOP_SLEEP_TIME);
   until false;
@@ -280,8 +295,9 @@ begin
   // Filesytem
   {$IFDEF OUTPUT}Log('Init settings...');{$ENDIF}
   AppData := GetPathInAppData('Explorer Last Path Memorizer', 'Codrut Software', TAppDataType.Roaming, true);
+  FileLogPath := AppData + 'app.log';
   LastKnowPath := AppData + 'last-know.dat';
-  InclusionPath := APpData + 'inclusion-rules.txt';
+  InclusionPath := AppData + 'inclusion-rules.txt';
   try
     if TFile.Exists(LastKnowPath) then begin
       LastExpectedExplorerPath := TFile.ReadAllText(LastKnowPath, TEncoding.UTF8);
@@ -303,7 +319,9 @@ begin
   else begin
     InclusionSettings.Add('this pc');
     InclusionSettings.Add('home');
+    InclusionSettings.Add('quick access');
     InclusionSettings.Add('one drive');
+    InclusionSettings.Add('onedrive');
 
     InclusionSettings.SaveToFile(InclusionPath);
   end;
