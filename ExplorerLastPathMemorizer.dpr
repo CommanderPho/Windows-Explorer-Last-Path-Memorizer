@@ -16,6 +16,7 @@ uses
   System.SysUtils,
   System.Generics.Collections,
   System.Generics.Defaults,
+  Cod.SysUtils,
   Cod.ArrayHelpers,
   Cod.Files,
   Cod.Windows,
@@ -31,6 +32,7 @@ uses
 const
   LOOP_SLEEP_TIME = 50;
 
+  EXPLORER_MAX_RETRY = 5; // retry to fetch interface
   EXPLORER_POLL_INTERVAL = 500; // ms
 
 var
@@ -41,7 +43,10 @@ var
   ShellWindows: IShellWindows;
 
   // System
-  var AppData, LastKnowPath: string;
+  var AppData, LastKnowPath, InclusionPath: string;
+
+  // Settings
+  InclusionSettings: TStringList;
 
   // Expect
   LastExpectedExplorerPath: string='';
@@ -52,6 +57,7 @@ var
   ProcessHandle: TProcessHandle;
   ModuleName: string;
 
+    ExplorerRetryCounter: integer;
     LastExplorerPoll: UInt64 = 0;
     LastActiveWindow: HWND=0;
     LastWasAWindowChange: boolean; // the last time the windows were changed
@@ -69,52 +75,14 @@ begin
 end;
 {$ENDIF}
 
-function GetPathOfExplorerWindow(Handle: HWND): string;
-  function ExplorerLocationToPath(const URL: string): string;
-  begin
-    Result := URL;
-
-    if Result.StartsWith('file:///') then
-      Delete(Result, 1, 8);
-
-    Result := StringReplace(Result, '/', '\', [rfReplaceAll]);
-    Result := TNetEncoding.URL.Decode(Result);
-  end;
-var
-  Browser: IWebBrowser2;
-  Disp: IDispatch;
-  I: Integer;
-begin
-  Result := '';
-
-  Handle := GetAncestor(Handle, GA_ROOT);
-
-  for I := 0 to ShellWindows.Count - 1 do
-  begin
-    Disp := ShellWindows.Item(I);
-
-    if Supports(Disp, IWebBrowser2, Browser) then
-    begin
-      if GetAncestor(HWND(Browser.HWND), GA_ROOT) = Handle then
-      begin
-        const S = Browser.LocationURL;
-        {$IFDEF OUTPUT}Log('Location of window: "%s", "%s"', [S, Browser.LocationName]);{$ENDIF}
-
-        Result := ExplorerLocationToPath(S);
-        Exit;
-      end;
-    end;
-  end;
-end;
-
-function SetPathOfExplorerWindow(Handle: HWND; const Path: string): boolean;
+function GetExplorerBrowserInterface(Handle: HWND): IWebBrowser2;
 var
   Browser: IWebBrowser2;
   Disp: IDispatch;
   I: Integer;
   Root: HWND;
 begin
-  Result := false;
+  Result := nil;
 
   Handle := GetAncestor(Handle, GA_ROOT);
 
@@ -130,16 +98,21 @@ begin
          (IsChild(Handle, HWND(Browser.HWND))) or
          (IsChild(Root, Handle)) then
       begin
-        Browser.Navigate(
-          WideString(Path),
-          EmptyParam,
-          EmptyParam,
-          EmptyParam,
-          EmptyParam);
-        Exit(true);
+        Exit(Browser);
       end;
     end;
   end;
+end;
+
+function ExplorerLocationToPath(const URL: string): string;
+begin
+  Result := URL;
+
+  if Result.StartsWith('file:///') then
+    Delete(Result, 1, 8);
+
+  Result := StringReplace(Result, '/', '\', [rfReplaceAll]);
+  Result := TNetEncoding.URL.Decode(Result);
 end;
 
 procedure DoLoop;
@@ -175,7 +148,7 @@ begin
     exit;
 
   if ActiveWindow = LastActiveWindow then begin
-    if not LastWasExplorerWindow then
+    if not LastWasExplorerWindow and ((ExplorerRetryCounter = 0) or (ExplorerRetryCounter >= EXPLORER_MAX_RETRY)) then
       Exit;
 
     if not LastWasAWindowChange and (GetTickCount64 - LastExplorerPoll < EXPLORER_POLL_INTERVAL) then
@@ -189,6 +162,7 @@ begin
   if ActiveWindow <> LastActiveWindow then begin
     LastActiveWindow := ActiveWindow;
     LastWasExplorerWindow := false;
+    ExplorerRetryCounter := 0;
 
   //  {$IFDEF OUTPUT}Log('WINDOW:"%s"', [ActiveWindow.GetTitle]);{$ENDIF}
 
@@ -218,20 +192,30 @@ begin
   //  {$IFDEF OUTPUT}Log('MODULE: "%s"', [ModuleName]);{$ENDIF}
     if ModuleName <> ExpectedModuleName then
       Exit;
-    LastWasExplorerWindow := true;
-    LastExplorerPoll := GetTickCount64;
   //  {$IFDEF OUTPUT}Log('Matches explorer!!');{$ENDIF}
   end;
 
-  // Check new window
+  // Fetch browser
+  const Browser = GetExplorerBrowserInterface(ActiveWindow);
+  if Browser = nil then begin
+    Inc(ExplorerRetryCounter);
+    {$IFDEF OUTPUT}Log('Explore window has NO browser interface! (attempt %d/%d)', [ExplorerRetryCounter, EXPLORER_MAX_RETRY]);{$ENDIF}
+    Exit; // if  LastWasExplorerWindow is true at this point.... um app is cooked (eats CPU cycles)
+  end;
+  // Is explorer
+  LastWasExplorerWindow := true;
+  LastExplorerPoll := GetTickCount64;
+
+  // Fetch path
+  const ExploreURL: string = Browser.LocationURL;
+  const ExploreName: string = Browser.LocationName;
+  var CurrentPath := ExplorerLocationToPath(ExploreURL);
 
   if KnownExplorerWindowsPaths.ContainsKey(ActiveWindow) then begin
     // MODE EXISTING
 //    {$IFDEF OUTPUT}Log('Existing explorer windows detected! Processing');{$ENDIF}
 
     // Store last path
-    LastExplorerPoll := GetTickCount64;
-    var CurrentPath := GetPathOfExplorerWindow(ActiveWindow);
     if (CurrentPath <> '') and TDirectory.Exists(CurrentPath) then begin
       KnownExplorerWindowsPaths.AddOrSetValue(ActiveWindow, CurrentPath);
       {$IFDEF OUTPUT}Log('Changed PATH for window "%d" to "%s".', [ActiveWindow, CurrentPath]);{$ENDIF}
@@ -239,19 +223,22 @@ begin
 
   end else begin
     // MODE NEW WINDOW
-    {$IFDEF OUTPUT}Log('New EXPLORER WINDOW detected! Processing');{$ENDIF}
+    {$IFDEF OUTPUT}Log('New EXPLORER WINDOW detected! U:(%s) N:(%s) Processing', [ExploreURL, ExploreName]);{$ENDIF}
 
+    if not ExploreURL.StartsWith('file:///', True) and (LastExpectedExplorerPath <> '') and TDirectory.Exists(LastExpectedExplorerPath)
+      and ((InclusionSettings.Count = 0) or InclusionSettings.Contains(ExploreName.ToLower)) then begin
+      CurrentPath := LastExpectedExplorerPath;
+      Browser.Navigate(
+        WideString(CurrentPath),
+        EmptyParam,
+        EmptyParam,
+        EmptyParam,
+        EmptyParam);
+    end;
+
+    //
+    KnownExplorerWindowsPaths.Add(ActiveWindow, CurrentPath)
   end;
-
-
-                   
-  // Set path
-  if (LastExpectedExplorerPath = '') or (not TDirectory.Exists(LastExpectedExplorerPath)) or (GetPathOfExplorerWindow(ActiveWindow) <> '') or SetPathOfExplorerWindow(ActiveWindow, LastExpectedExplorerPath) then begin
-    KnownExplorerWindowsPaths.Add(ActiveWindow, LastExpectedExplorerPath)
-  end
-  else begin
-    {$IFDEF OUTPUT}Log('Processing failed!');{$ENDIF}
-  end;                                                                                        
 end;
 
 procedure MainLoop;
@@ -267,6 +254,22 @@ end;
 begin
   {$IFDEF OUTPUT}Log('Starting...');{$ENDIF}
 
+  // Param
+  if HasParameter('help', 'h') then begin
+    winapi.Windows.MessageBox(0,
+      'Explorer Last Path Memorizer'#13+
+      '================================'#13+
+      'Copyright (c) 2026 Codrut Software.'#13+
+      'Developed by Petculescu Codrut'#13+
+      ''#13+
+      'https://www.codrutsoft.com/'#13+
+      ''#13+
+      'Version 1.0'#13+
+      '', 'About', 0
+      );
+      Exit;
+  end;
+
   {$IFDEF OUTPUT}Log('Processing instances...');{$ENDIF}
   SetSemaphore('com.codrutsoft.explorerlastpathmemorizer');
   InstanceAuto(TAutoInstanceMode.TerminateIfOtherExist);
@@ -278,6 +281,7 @@ begin
   {$IFDEF OUTPUT}Log('Init settings...');{$ENDIF}
   AppData := GetPathInAppData('Explorer Last Path Memorizer', 'Codrut Software', TAppDataType.Roaming, true);
   LastKnowPath := AppData + 'last-know.dat';
+  InclusionPath := APpData + 'inclusion-rules.txt';
   try
     if TFile.Exists(LastKnowPath) then begin
       LastExpectedExplorerPath := TFile.ReadAllText(LastKnowPath, TEncoding.UTF8);
@@ -291,6 +295,19 @@ begin
   // Create
   {$IFDEF OUTPUT}Log('Creating items');{$ENDIF}
   KnownExplorerWindowsPaths := TDictionary<HWND, string>.Create;
+  InclusionSettings := TStringList.Create;
+
+  // Read inclusion
+  if TFile.Exists(InclusionPath) then
+    InclusionSettings.LoadFromFile(InclusionPath)
+  else begin
+    InclusionSettings.Add('this pc');
+    InclusionSettings.Add('home');
+    InclusionSettings.Add('one drive');
+
+    InclusionSettings.SaveToFile(InclusionPath);
+  end;
+  {$IFDEF OUTPUT}Log('Read a total of %d inclusion settings!', [InclusionSettings.Count]);{$ENDIF}
   try
     // Init COM
     {$IFDEF OUTPUT}Log('Initializing COM');{$ENDIF}
@@ -314,5 +331,6 @@ begin
   finally
     // Free
     KnownExplorerWindowsPaths.Free;
+    InclusionSettings.Free;
   end;
 end.
