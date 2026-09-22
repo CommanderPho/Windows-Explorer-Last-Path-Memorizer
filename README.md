@@ -30,3 +30,6 @@ Else type the captions in lowercase (like "this pc" or "home") for which news wi
 
 ## Images
 <img width="1000" height="605" alt="Recording 2026-07-21 182303" src="https://github.com/user-attachments/assets/21f52ae0-8e89-428b-bb51-4412234c4599" />
+
+
+# 2026-09-22 - Pho - Reviewed this software and couldn't get it to compile even with Delphi IDE installed due to dependencies issues. Canceling.
