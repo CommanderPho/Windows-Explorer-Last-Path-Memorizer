@@ -222,18 +222,24 @@ begin
       {$IFDEF OUTPUT}Log('Failed to fetch ProcessHandle');{$ENDIF}
       exit;
     end;
-
-    // Get module
-    try
-      ModuleName := ProcessHandle.GetModuleFilePath.ToLower;
-    except
-      {$IFDEF OUTPUT}Log('Failed to fetch ProcessHandle');{$ENDIF}
-      exit;
-    end;
-  //  {$IFDEF OUTPUT}Log('MODULE: "%s"', [ModuleName]);{$ENDIF}
-    if ModuleName <> ExpectedModuleName then
+    if ProcessHandle = 0 then
       Exit;
-  //  {$IFDEF OUTPUT}Log('Matches explorer!!');{$ENDIF}
+
+    try
+      // Get module
+      try
+        ModuleName := ProcessHandle.GetModuleFilePath.ToLower;
+      except
+        {$IFDEF OUTPUT}Log('Failed to fetch ModuleName');{$ENDIF}
+        exit;
+      end;
+    //  {$IFDEF OUTPUT}Log('MODULE: "%s"', [ModuleName]);{$ENDIF}
+      if ModuleName <> ExpectedModuleName then
+        Exit;
+    //  {$IFDEF OUTPUT}Log('Matches explorer!!');{$ENDIF}
+    finally
+      ProcessHandle.CloseHandle;
+    end;
   end;
 
   // Fetch browser
@@ -527,7 +533,7 @@ begin
       ''#13+
       'Keybinds:'#13+
       'Ctrl+Shift+T -> Re-open last window'#13+
-      'Ctrl+Shift+T -> Open menu with opened windows history'#13+
+      'Ctrl+Shift+R -> Open menu with opened windows history'#13+
       'These work when a Explorer/Desktop window is focused'#13+
       ''#13+
       '-help -> show help info'#13+
